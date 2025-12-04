@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # --- BASES DE DATOS ---
+  db_productos:
+    image: mysql:8.0
+    container_name: db_productos 
+    environment:
+      MYSQL_ROOT_PASSWORD: root_secret
+      MYSQL_DATABASE: db_productos_miramar
+    ports:
+      - '33061:3306'
+    volumes:
+      - db-productos-data:/var/lib/mysql
+    networks:
+      - miramar_network
+  
+  db_ventas:
+    image: mysql:8.0
+    container_name: db_ventas
+    environment:
+      MYSQL_ROOT_PASSWORD: root_secret
+      MYSQL_DATABASE: db_ventas_clientes_miramar
+    ports:
+      - '33062:3306'
+    volumes:
+      - db-ventas-data:/var/lib/mysql
+    networks:
+      - miramar_network 
+  
+  # --- MICROSERVICIO DE PRODUCTOS ---
+  miramar-productos:
+    build: 
+      # AJUSTE DE CONTEXTO: Sube un nivel (..) y entra a miramar-productos/
+      context: ../miramar-productos 
+    container_name: miramar-productos
+    ports: 
+      - '8081:80' 
+    environment: 
+      DB_CONNECTION: mysql
+      DB_HOST: db_productos
+      DB_PORT: 3306
+      DB_DATABASE: db_productos_miramar
+      DB_USERNAME: root
+      DB_PASSWORD: root_secret
+    depends_on:
+      - db_productos
+    networks:
+      - miramar_network
+    volumes:
+      # AJUSTE DE VOLUMEN: Mapea la carpeta adyacente
+      - ../miramar-productos:/var/www/html 
+    command: php -S 0.0.0.0:80 -t public
+
+  # --- MICROSERVICIO DE VENTAS Y CLIENTES ---
+  miramar-ventas-clientes:
+    build: 
+      # AJUSTE DE CONTEXTO: Sube un nivel (..) y entra a miramar-ventas-clientes/
+      context: ../miramar-ventas-clientes 
+    container_name: miramar-ventas-clientes
+    ports: 
+      - '8082:80' 
+    environment: 
+      DB_CONNECTION: mysql
+      DB_HOST: db_ventas
+      DB_PORT: 3306
+      DB_DATABASE: db_ventas_clientes_miramar
+      DB_USERNAME: root
+      DB_PASSWORD: root_secret
+      # IMPORTANTE: Host interno para comunicación directa
+      PRODUCTOS_SERVICE_HOST: miramar-productos 
+      PRODUCTOS_SERVICE_PORT: 80
+    depends_on:
+      - db_ventas
+      - miramar-productos
+    networks:
+      - miramar_network
+    volumes:
+      # AJUSTE DE VOLUMEN: Mapea la carpeta adyacente
+      - ../miramar-ventas-clientes:/var/www/html 
+    command: php -S 0.0.0.0:80 -t public
+
+  # --- API GATEWAY (Queda igual, solo el contexto es el actual) ---
+  miramar-api-gateway:
+    build: 
+      context: . # El contexto es la carpeta actual (donde está el .yml y Dockerfile)
+    container_name: miramar-api-gateway
+    ports: 
+      - '8000:80'
+    environment:
+      # Hosts internos para enrutamiento
+      PRODUCTS_SERVICE_HOST: miramar-productos
+      PRODUCTS_SERVICE_PORT: 80
+      SALES_CLIENTS_SERVICE_HOST: miramar-ventas-clientes
+      SALES_CLIENTS_SERVICE_PORT: 80
+    depends_on:
+      - miramar-productos
+      - miramar-ventas-clientes
+    networks:
+      - miramar_network
+    volumes:
+      - ./miramar-api-gateway:/var/www/html # El volumen es la carpeta actual
+    command: php -S 0.0.0.0:80 -t public
+
+  # --- PHPMYADMIN ---
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest 
+    container_name: miramar-phpmyadmin
+    ports:
+      - '8080:80' 
+    environment:
+      PMA_HOSTS: db_productos,db_ventas 
+      MYSQL_ROOT_PASSWORD: root_secret 
+    depends_on:
+      - db_productos
+      - db_ventas
+    networks:
+      - miramar_network
+
+volumes:
+  db-productos-data:
+  db-ventas-data:
+
+networks:
+  miramar_network:
+    driver: bridge
